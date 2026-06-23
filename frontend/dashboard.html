@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Docker Swarm Dashboard - Algorithm 1 & 2 Monitor</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Inter', sans-serif; background: #0a0e1a; color: #e0e6f0; min-height: 100vh; }
+        .header { background: linear-gradient(135deg, #0d1330 0%, #1a1f3a 100%); border-bottom: 1px solid rgba(99,102,241,0.2); padding: 20px 40px; display: flex; justify-content: space-between; align-items: center; }
+        .header h1 { font-size: 1.5rem; font-weight: 700; background: linear-gradient(135deg, #818cf8, #6366f1, #a78bfa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .header .subtitle { font-size: 0.8rem; color: #6b7280; margin-top: 2px; }
+        .status-badge { display: flex; align-items: center; gap: 8px; background: rgba(34,197,94,0.1); border: 1px solid rgba(34,197,94,0.3); padding: 8px 16px; border-radius: 20px; font-size: 0.85rem; color: #22c55e; }
+        .status-dot { width: 8px; height: 8px; background: #22c55e; border-radius: 50%; animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(34,197,94,0.4); } 50% { opacity: 0.8; box-shadow: 0 0 0 6px rgba(34,197,94,0); } }
+        .main { padding: 30px 40px; }
+        .grid { display: grid; gap: 24px; }
+        .grid-4 { grid-template-columns: repeat(4, 1fr); }
+        .grid-2 { grid-template-columns: repeat(2, 1fr); }
+        .grid-3 { grid-template-columns: 1fr 1fr 1fr; }
+        .card { background: linear-gradient(135deg, #111827 0%, #0f172a 100%); border: 1px solid rgba(99,102,241,0.15); border-radius: 16px; padding: 24px; transition: all 0.3s ease; }
+        .card:hover { border-color: rgba(99,102,241,0.4); box-shadow: 0 8px 32px rgba(99,102,241,0.1); transform: translateY(-2px); }
+        .card-title { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1.5px; color: #6b7280; margin-bottom: 12px; }
+        .card-value { font-size: 2.2rem; font-weight: 700; background: linear-gradient(135deg, #818cf8, #6366f1); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .card-value.green { background: linear-gradient(135deg, #34d399, #22c55e); -webkit-background-clip: text; }
+        .card-value.amber { background: linear-gradient(135deg, #fbbf24, #f59e0b); -webkit-background-clip: text; }
+        .card-value.cyan { background: linear-gradient(135deg, #22d3ee, #06b6d4); -webkit-background-clip: text; }
+        .card-value.rose { background: linear-gradient(135deg, #fb7185, #e11d48); -webkit-background-clip: text; }
+        .card-value.small { font-size: 1.2rem; }
+        .section-title { font-size: 1.1rem; font-weight: 600; margin: 32px 0 16px; color: #c7d2fe; display: flex; justify-content: space-between; align-items: center; }
+        .container-card { background: linear-gradient(135deg, #111827, #0f172a); border: 1px solid rgba(99,102,241,0.15); border-radius: 12px; padding: 20px; position: relative; overflow: hidden; }
+        .container-card.active { border-color: rgba(34,197,94,0.4); }
+        .container-card .flash { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(99,102,241,0.15); opacity: 0; transition: opacity 0.3s; pointer-events: none; }
+        .container-card.hit .flash { opacity: 1; }
+        .container-id { font-family: 'Courier New', monospace; font-size: 0.85rem; color: #a78bfa; margin-bottom: 8px; }
+        .container-requests { font-size: 1.8rem; font-weight: 700; color: #e0e6f0; }
+        .container-pct { font-size: 0.85rem; color: #6b7280; margin-top: 4px; }
+        .progress-bar { height: 4px; background: rgba(99,102,241,0.1); border-radius: 2px; margin-top: 12px; overflow: hidden; }
+        .progress-fill { height: 100%; border-radius: 2px; transition: width 0.5s ease; }
+        .mem-bar .progress-fill { background: linear-gradient(90deg, #22c55e, #f59e0b, #ef4444); }
+        .req-bar .progress-fill { background: linear-gradient(90deg, #6366f1, #818cf8); }
+        .chart-container { position: relative; height: 280px; }
+        .btn-group { display: flex; gap: 12px; margin-top: 24px; flex-wrap: wrap; }
+        .btn { padding: 12px 24px; border: none; border-radius: 10px; font-family: 'Inter', sans-serif; font-weight: 600; font-size: 0.9rem; cursor: pointer; transition: all 0.3s ease; display: flex; align-items: center; gap: 8px; }
+        .btn-primary { background: linear-gradient(135deg, #6366f1, #4f46e5); color: white; }
+        .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 20px rgba(99,102,241,0.4); }
+        .btn-danger { background: linear-gradient(135deg, #ef4444, #dc2626); color: white; }
+        .btn-danger:hover { transform: translateY(-1px); box-shadow: 0 4px 20px rgba(239,68,68,0.4); }
+        .btn-success { background: linear-gradient(135deg, #22c55e, #16a34a); color: white; }
+        .btn-success:hover { transform: translateY(-1px); box-shadow: 0 4px 20px rgba(34,197,94,0.4); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none !important; }
+        .log-area { background: #050810; border: 1px solid rgba(99,102,241,0.1); border-radius: 10px; padding: 16px; font-family: 'Courier New', monospace; font-size: 0.8rem; max-height: 250px; overflow-y: auto; line-height: 1.8; }
+        .log-entry { color: #6b7280; }
+        .log-entry .time { color: #4b5563; }
+        .log-entry .container { color: #a78bfa; }
+        .log-entry .success { color: #22c55e; }
+        .log-entry .error { color: #ef4444; }
+        .log-entry .warning { color: #f59e0b; }
+        .sd-table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+        .sd-table th { text-align: left; padding: 10px; color: #6b7280; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid rgba(99,102,241,0.1); }
+        .sd-table td { padding: 10px; font-size: 0.85rem; border-bottom: 1px solid rgba(99,102,241,0.05); }
+        .sd-table .svc-name { color: #818cf8; font-family: 'Courier New', monospace; }
+        .sd-table .svc-status { color: #22c55e; }
+        .tag { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 0.7rem; font-weight: 600; margin-left: 8px; }
+        .tag-algo1 { background: rgba(99,102,241,0.2); color: #818cf8; }
+        .tag-algo2 { background: rgba(34,197,94,0.2); color: #34d399; }
+        .tag-alert { background: rgba(239,68,68,0.2); color: #ef4444; }
+        @media (max-width: 900px) { .grid-4 { grid-template-columns: repeat(2, 1fr); } .grid-3, .grid-2 { grid-template-columns: 1fr; } .main { padding: 16px; } }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <div>
+        <h1>⚡ Docker Swarm Dashboard</h1>
+        <div class="subtitle">Algorithm 1 (Active Orchestration) & Algorithm 2 (Memory-Based LB with Fallback)</div>
+    </div>
+    <div class="status-badge">
+        <div class="status-dot"></div>
+        <span id="swarmStatus">Swarm Active</span>
+    </div>
+</div>
+
+<div class="main">
+    <!-- Auto-Scaling Status (Algorithm 1) -->
+    <div class="section-title">
+        <div>📈 Algorithm 1: Active Auto-Scaling Engine <span class="tag tag-algo1">ALGO 1 ENHANCED</span></div>
+        <div id="autoScaleStatusTag" class="tag tag-algo2">Auto-Scaling: ENABLED</div>
+    </div>
+    <div class="grid grid-4" id="autoScaleCards">
+        <div class="card"><div class="card-title">Backend Replicas</div><div class="card-value green" id="asReplicas">0</div><div class="container-pct" id="asReplicasRange">Min: 2 | Max: 8</div></div>
+        <div class="card"><div class="card-title">Cluster Avg Memory</div><div class="card-value" id="asAvgMem">0%</div><div class="container-pct" id="asMemThresholds">Scale UP > 70% | DOWN < 30%</div></div>
+        <div class="card"><div class="card-title">Last Scaling Action</div><div class="card-value small amber" id="asLastAction">NONE</div><div class="container-pct" id="asLastActionTime">—</div></div>
+        <div class="card"><div class="card-title">Health Probes</div><div class="card-value cyan" id="asHealthProbes">0</div><div class="container-pct">Containers actively monitored</div></div>
+    </div>
+
+    <!-- Stats Cards -->
+    <div class="section-title" style="margin-top: 32px;">Overview</div>
+    <div class="grid grid-4" id="statsCards">
+        <div class="card"><div class="card-title">Total Requests</div><div class="card-value" id="totalRequests">0</div></div>
+        <div class="card"><div class="card-title">Active Containers</div><div class="card-value green" id="activeContainers">0</div></div>
+        <div class="card"><div class="card-title">Redis Status</div><div class="card-value cyan" id="redisStatus">—</div></div>
+        <div class="card"><div class="card-title">LB Algorithm</div><div class="card-value amber" id="lbAlgo">Memory</div></div>
+    </div>
+
+    <!-- Memory-Based LB Status (Algorithm 2) -->
+    <div class="section-title">
+        <div>🧠 Algorithm 2: Memory-Based Load Balancing <span class="tag tag-algo2">ALGO 2 ENHANCED</span></div>
+        <div id="fallbackStatusTag" class="tag tag-algo2">Fallback: ENABLED</div>
+    </div>
+    <div class="grid grid-4" id="memoryGrid"></div>
+
+    <!-- Container Load Distribution -->
+    <div class="section-title">📦 Container Load Distribution & Latency</div>
+    <div class="grid grid-4" id="containerGrid"></div>
+
+    <!-- Charts -->
+    <div class="section-title">📊 Real-Time Analytics</div>
+    <div class="grid grid-2">
+        <div class="card">
+            <div class="card-title">Request Distribution (Pie Chart)</div>
+            <div class="chart-container"><canvas id="pieChart"></canvas></div>
+        </div>
+        <div class="card">
+            <div class="card-title">Memory Usage Over Time (Per Container)</div>
+            <div class="chart-container"><canvas id="memoryChart"></canvas></div>
+        </div>
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="section-title">🧪 Live Testing Controls</div>
+    <div class="card">
+        <div class="btn-group">
+            <button class="btn btn-primary" onclick="sendBurstRequests(20)" id="btnBurst">🚀 Send 20 Requests</button>
+            <button class="btn btn-primary" onclick="sendBurstRequests(100)" id="btnBurst100">⚡ Send 100 Requests</button>
+            <button class="btn btn-success" onclick="testExtract()" id="btnExtract">🔗 Test Link Extractor</button>
+            <button class="btn btn-danger" onclick="resetStats()" id="btnReset">🔄 Reset Stats</button>
+        </div>
+        <div style="margin-top: 20px;">
+            <div class="card-title">Live Activity Log</div>
+            <div class="log-area" id="logArea">
+                <div class="log-entry"><span class="success">Dashboard ready. Click a button to start testing.</span></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Orchestrator Events (Algorithm 1) -->
+    <div class="section-title">🎯 Algorithm 1: Service Orchestration Events <span class="tag tag-algo1">ALGO 1</span></div>
+    <div class="card">
+        <div class="card-title">Orchestrator Event Log (Real-Time Swarm Events)</div>
+        <div class="log-area" id="orchLogArea">
+            <div class="log-entry"><span class="success">Waiting for orchestrator events...</span></div>
+        </div>
+    </div>
+
+    <!-- Service Discovery Map -->
+    <div class="section-title">🔍 Service Discovery Map</div>
+    <div class="card">
+        <table class="sd-table">
+            <thead><tr><th>Service</th><th>Type</th><th>Replicas</th><th>DNS Name</th><th>Algorithm</th><th>Status</th></tr></thead>
+            <tbody id="sdTableBody">
+                <tr><td class="svc-name">frontend</td><td>Nginx (Reverse Proxy)</td><td>1</td><td>frontend</td><td>—</td><td class="svc-status">● Healthy</td></tr>
+                <tr><td class="svc-name">loadbalancer</td><td>Memory-Based LB</td><td>1</td><td>loadbalancer</td><td><span class="tag tag-algo2">Algo 2</span></td><td class="svc-status">● Healthy</td></tr>
+                <tr><td class="svc-name">orchestrator</td><td>Service Monitor</td><td>1</td><td>orchestrator</td><td><span class="tag tag-algo1">Algo 1</span></td><td class="svc-status">● Healthy</td></tr>
+                <tr><td class="svc-name">backend</td><td>Flask API</td><td id="sdBackendReplicas">4</td><td>backend</td><td>—</td><td class="svc-status">● Healthy</td></tr>
+                <tr><td class="svc-name">redis</td><td>Redis Cache</td><td>1</td><td>redis</td><td>—</td><td class="svc-status" id="redisSvcStatus">● Healthy</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+const API = '/api';
+const COLORS = ['#6366f1','#22c55e','#f59e0b','#ef4444','#06b6d4','#a78bfa','#f472b6','#34d399', '#fca5a5', '#93c5fd', '#d8b4fe', '#6ee7b7'];
+let containers = {};
+let responseTimes = {};
+let memoryData = {};
+let pieChart, memoryChart;
+let timeLabels = [];
+let memDatasets = {};
+
+function initCharts() {
+    pieChart = new Chart(document.getElementById('pieChart').getContext('2d'), {
+        type: 'doughnut',
+        data: { labels: [], datasets: [{ data: [], backgroundColor: COLORS, borderWidth: 0, hoverOffset: 8 }] },
+        options: { responsive: true, maintainAspectRatio: false, cutout: '65%',
+            plugins: { legend: { position: 'bottom', labels: { color: '#9ca3af', font: { family: 'Courier New', size: 11 }, padding: 12 } } } }
+    });
+    memoryChart = new Chart(document.getElementById('memoryChart').getContext('2d'), {
+        type: 'line',
+        data: { labels: [], datasets: [] },
+        options: { responsive: true, maintainAspectRatio: false,
+            scales: { x: { ticks: { color: '#4b5563', maxTicksLimit: 10 }, grid: { color: 'rgba(99,102,241,0.05)' } },
+                      y: { ticks: { color: '#4b5563', callback: v => v + '%' }, grid: { color: 'rgba(99,102,241,0.05)' }, beginAtZero: true, max: 100, title: { display: true, text: 'Memory %', color: '#6b7280' } } },
+            plugins: { legend: { position: 'bottom', labels: { color: '#9ca3af', font: { family: 'Courier New', size: 11 } } } },
+            elements: { point: { radius: 2 }, line: { tension: 0.3, borderWidth: 2 } } }
+    });
+}
+
+function addLog(msg, type = '') {
+    const log = document.getElementById('logArea');
+    const time = new Date().toLocaleTimeString();
+    const div = document.createElement('div');
+    div.className = 'log-entry';
+    div.innerHTML = `<span class="time">[${time}]</span> <span class="${type}">${msg}</span>`;
+    log.prepend(div);
+    if (log.children.length > 100) log.removeChild(log.lastChild);
+}
+
+function updateMemoryGrid(lbData) {
+    const grid = document.getElementById('memoryGrid');
+    const stats = lbData.container_memory_stats || {};
+    const ids = Object.keys(stats);
+    grid.innerHTML = ids.map((id, i) => {
+        const s = stats[id];
+        const memPct = s.memory_percent || 0;
+        const memColor = memPct > 70 ? '#ef4444' : memPct > 40 ? '#f59e0b' : '#22c55e';
+        return `<div class="container-card active">
+            <div class="container-id">📦 ${id}</div>
+            <div style="font-size:1.4rem;font-weight:700;color:${memColor}">${memPct.toFixed(1)}% RAM</div>
+            <div class="container-pct">${s.memory_usage_mb || 0} / ${s.memory_limit_mb || 0} MB</div>
+            <div class="progress-bar mem-bar"><div class="progress-fill" style="width:${Math.min(memPct,100)}%"></div></div>
+            <div class="container-pct" style="margin-top:8px">CPU: ${(s.cpu_percent||0).toFixed(1)}%</div>
+        </div>`;
+    }).join('');
+
+    const fallbackTag = document.getElementById('fallbackStatusTag');
+    if (lbData.fallback_enabled) {
+        fallbackTag.textContent = `Fallback: ENABLED (${lbData.fallback_requests || 0} used)`;
+        fallbackTag.className = lbData.fallback_requests > 0 ? 'tag tag-amber' : 'tag tag-algo2';
+    } else {
+        fallbackTag.textContent = `Fallback: DISABLED (${lbData.rejected_requests || 0} rejected)`;
+        fallbackTag.className = 'tag tag-alert';
+    }
+}
+
+function updateContainerGrid() {
+    const grid = document.getElementById('containerGrid');
+    const ids = Object.keys(containers);
+    const total = ids.reduce((s, id) => s + containers[id], 0);
+    grid.innerHTML = ids.map((id, i) => {
+        const count = containers[id];
+        const pct = total > 0 ? ((count / total) * 100).toFixed(1) : 0;
+        const rt = responseTimes[id] || {};
+        const p50 = rt.p50_ms || 0;
+        return `<div class="container-card active" id="cc-${id}">
+            <div class="flash"></div>
+            <div class="container-id">📦 ${id.substring(0, 12)}</div>
+            <div class="container-requests">${count}</div>
+            <div class="container-pct">${pct}% of total requests</div>
+            <div class="progress-bar req-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
+            <div class="container-pct" style="margin-top:8px">Latency P50: <strong>${p50}ms</strong></div>
+        </div>`;
+    }).join('');
+}
+
+function flashContainer(id) { const el = document.getElementById('cc-' + id); if (el) { el.classList.add('hit'); setTimeout(() => el.classList.remove('hit'), 300); } }
+
+function updateCharts(lbData) {
+    const ids = Object.keys(containers);
+    const counts = ids.map(id => containers[id]);
+    pieChart.data.labels = ids.map(id => id.substring(0, 12));
+    pieChart.data.datasets[0].data = counts;
+    pieChart.data.datasets[0].backgroundColor = COLORS.slice(0, ids.length);
+    pieChart.update('none');
+
+    // Memory chart
+    const stats = (lbData && lbData.container_memory_stats) || {};
+    const memIds = Object.keys(stats);
+    if (memIds.length > 0) {
+        const now = new Date().toLocaleTimeString();
+        timeLabels.push(now);
+        if (timeLabels.length > 30) timeLabels.shift();
+        memoryChart.data.labels = [...timeLabels];
+        memoryChart.data.datasets = memIds.map((id, i) => {
+            if (!memDatasets[id]) memDatasets[id] = [];
+            memDatasets[id].push(stats[id].memory_percent || 0);
+            if (memDatasets[id].length > 30) memDatasets[id].shift();
+            return { label: id, data: [...memDatasets[id]], borderColor: COLORS[i % COLORS.length], backgroundColor: COLORS[i % COLORS.length] + '20', fill: false };
+        });
+        memoryChart.update('none');
+    }
+}
+
+function updateStats() {
+    const total = Object.values(containers).reduce((s, v) => s + v, 0);
+    document.getElementById('totalRequests').textContent = total;
+    document.getElementById('activeContainers').textContent = Object.keys(containers).length;
+}
+
+async function sendSingleRequest() {
+    try {
+        const res = await fetch(API + '/');
+        const data = await res.json();
+        const cid = data.container_id;
+        containers[cid] = (containers[cid] || 0) + 1;
+        document.getElementById('redisStatus').textContent = data.redis_connected ? '● Connected' : '✕ Down';
+        flashContainer(cid);
+        return data;
+    } catch (e) { addLog('Request failed: ' + e.message, 'error'); return null; }
+}
+
+async function sendBurstRequests(count) {
+    const btn = count <= 20 ? document.getElementById('btnBurst') : document.getElementById('btnBurst100');
+    btn.disabled = true;
+    addLog(`Sending ${count} requests via Memory-Based LB (Algorithm 2)...`, 'success');
+    for (let i = 0; i < count; i++) {
+        await sendSingleRequest();
+        if (i % 5 === 0) { updateContainerGrid(); updateStats(); }
+    }
+    updateContainerGrid(); updateStats();
+    const ids = Object.keys(containers);
+    const total = Object.values(containers).reduce((s, v) => s + v, 0);
+    ids.forEach(id => { const pct = ((containers[id] / total) * 100).toFixed(1); addLog(`Container <span class="container">${id.substring(0,12)}</span>: ${containers[id]} reqs (${pct}%)`, ''); });
+    addLog(`✅ Burst complete — ${count} requests routed by memory usage across ${ids.length} containers`, 'success');
+    btn.disabled = false;
+    fetchLBStatus();
+}
+
+async function testExtract() {
+    document.getElementById('btnExtract').disabled = true;
+    addLog('Testing link extractor (with Redis caching)...', '');
+    try {
+        const res = await fetch(API + '/extract?url=http://example.com');
+        const data = await res.json();
+        addLog(`🔗 Extracted ${data.links_found} links | Cached: ${data.cached} | Container: <span class="container">${data.container_id.substring(0,12)}</span>`, 'success');
+    } catch (e) { addLog('Extract failed: ' + e.message, 'error'); }
+    document.getElementById('btnExtract').disabled = false;
+}
+
+async function resetStats() {
+    containers = {}; memDatasets = {}; timeLabels = []; responseTimes = {};
+    updateContainerGrid(); updateStats();
+    pieChart.data.labels = []; pieChart.data.datasets[0].data = []; pieChart.update('none');
+    memoryChart.data.labels = []; memoryChart.data.datasets = []; memoryChart.update('none');
+    document.getElementById('memoryGrid').innerHTML = '';
+    addLog('📊 Stats reset', 'success');
+}
+
+async function fetchLBStatus() {
+    try {
+        const res = await fetch('/lb/lb-status');
+        const data = await res.json();
+        updateMemoryGrid(data);
+        if (data.requests_per_container) {
+            for (const [k, v] of Object.entries(data.requests_per_container)) {
+                containers[k] = parseInt(v) || 0;
+            }
+        }
+        if (data.response_times_per_container) {
+            responseTimes = data.response_times_per_container;
+        }
+        updateContainerGrid(); 
+        updateStats();
+        updateCharts(data);
+    } catch (e) { /* silent */ }
+}
+
+async function fetchOrchEvents() {
+    try {
+        const res = await fetch('/orchestrator/events');
+        const data = await res.json();
+        const log = document.getElementById('orchLogArea');
+        if (data.events && data.events.length > 0) {
+            log.innerHTML = data.events.slice(0, 50).map(e => {
+                const typeColor = e.type.includes('HEAL') || e.type.includes('SCALE') ? 'success' : e.type.includes('FAIL') || e.type.includes('KILL') || e.type.includes('DIE') ? 'error' : e.type.includes('START') || e.type.includes('CREATE') ? 'success' : 'warning';
+                return `<div class="log-entry"><span class="time">[${e.timestamp.split('T')[1]?.substring(0,8) || ''}]</span> <span class="${typeColor}">[${e.type}]</span> ${e.message}</div>`;
+            }).join('');
+        }
+    } catch (e) { /* silent */ }
+}
+
+async function fetchAutoScaleStatus() {
+    try {
+        const res = await fetch('/orchestrator/auto-scaling-status');
+        const data = await res.json();
+        
+        const status = data.auto_scaling || {};
+        const config = data.config || {};
+        
+        document.getElementById('asReplicas').textContent = status.current_replicas || 0;
+        document.getElementById('sdBackendReplicas').textContent = status.current_replicas || 4;
+        document.getElementById('asReplicasRange').textContent = `Min: ${config.min_replicas || 2} | Max: ${config.max_replicas || 8}`;
+        
+        const avgMem = status.avg_memory_percent || 0;
+        const memEl = document.getElementById('asAvgMem');
+        memEl.textContent = avgMem.toFixed(1) + '%';
+        if (avgMem > config.scale_up_threshold_percent) memEl.className = 'card-value rose';
+        else if (avgMem < config.scale_down_threshold_percent) memEl.className = 'card-value cyan';
+        else memEl.className = 'card-value green';
+        
+        document.getElementById('asMemThresholds').textContent = `Scale UP > ${config.scale_up_threshold_percent || 70}% | DOWN < ${config.scale_down_threshold_percent || 30}%`;
+        
+        const lastAction = status.last_action || 'NONE';
+        const actionEl = document.getElementById('asLastAction');
+        actionEl.textContent = lastAction.replace('_', ' ');
+        if (lastAction === 'SCALE_UP') actionEl.className = 'card-value small green';
+        else if (lastAction === 'SCALE_DOWN') actionEl.className = 'card-value small cyan';
+        else actionEl.className = 'card-value small amber';
+        
+        if (status.last_action_time) {
+            document.getElementById('asLastActionTime').textContent = new Date(status.last_action_time).toLocaleTimeString();
+        }
+
+        const tag = document.getElementById('autoScaleStatusTag');
+        if (config.enabled) {
+            tag.textContent = 'Auto-Scaling: ENABLED';
+            tag.className = 'tag tag-algo2';
+        } else {
+            tag.textContent = 'Auto-Scaling: DISABLED';
+            tag.className = 'tag tag-alert';
+        }
+        
+    } catch (e) { /* silent */ }
+}
+
+async function fetchHealthProbes() {
+    try {
+        const res = await fetch('/orchestrator/health-probes');
+        const data = await res.json();
+        document.getElementById('asHealthProbes').textContent = data.total_containers_probed || 0;
+    } catch (e) { /* silent */ }
+}
+
+async function fetchInitialStats() {
+    try {
+        const res = await fetch(API + '/stats');
+        const data = await res.json();
+        if (data.request_distribution_per_container) {
+            for (const [k, v] of Object.entries(data.request_distribution_per_container)) containers[k] = parseInt(v) || 0;
+        }
+        document.getElementById('redisStatus').textContent = data.redis_connected ? '● Connected' : '✕ Down';
+        updateContainerGrid(); updateStats();
+    } catch (e) { addLog('Could not fetch initial stats', 'error'); }
+}
+
+// Auto-refresh
+setInterval(fetchLBStatus, 3000);
+setInterval(fetchOrchEvents, 4000);
+setInterval(fetchAutoScaleStatus, 5000);
+setInterval(fetchHealthProbes, 10000);
+setInterval(fetchInitialStats, 5000);
+
+initCharts();
+fetchInitialStats();
+fetchLBStatus();
+fetchOrchEvents();
+fetchAutoScaleStatus();
+fetchHealthProbes();
+</script>
+</body>
+</html>

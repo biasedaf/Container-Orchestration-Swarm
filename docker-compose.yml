@@ -1,0 +1,170 @@
+# Docker Compose / Swarm Stack Definition
+# ==========================================
+# Implements the full architecture from the research paper:
+#
+# - 1 Frontend (Nginx)       - Dashboard + Reverse Proxy
+# - 1 Load Balancer (Python) - Algorithm 2: Memory-Based Routing  [NEW]
+# - 1 Orchestrator (Python)  - Algorithm 1: Service Orchestration  [NEW]
+# - 4 Backend (Flask)        - API Microservice replicas
+# - 1 Redis                  - Cache/Data Store (shared state)
+# - 1 Overlay Network        - Service Discovery via Swarm DNS
+#
+# Paper: "Load balancing and service discovery using Docker Swarm
+#         for microservice based big data applications"
+#
+# Deploy with: docker stack deploy -c docker-compose.yml cc_research
+
+version: '3.8'
+
+services:
+  # ======================
+  # FRONTEND SERVICE
+  # ======================
+  # Single Nginx instance serving dashboard and proxying to load balancer
+  frontend:
+    image: cc-research-frontend
+    build: ./frontend
+    ports:
+      - "8888:80"        # Expose on host port 8888
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+      placement:
+        constraints:
+          - node.role == manager
+    depends_on:
+      - loadbalancer
+    networks:
+      - app-network
+
+  # ======================
+  # LOAD BALANCER (Algorithm 2)  [NEW]
+  # ======================
+  # Memory-Based Load Balancer from the paper
+  # Monitors memory usage of each backend container
+  # Routes requests to the container with lowest memory utilization
+  # If all containers exceed threshold → returns 503
+  loadbalancer:
+    image: cc-research-loadbalancer
+    build: ./loadbalancer
+    environment:
+      - BACKEND_SERVICE=cc_research_backend
+      - BACKEND_PORT=5000
+      - MEMORY_THRESHOLD=80.0
+      - STATS_INTERVAL=2.0
+      - FALLBACK_ENABLED=true
+    volumes:
+      - //var/run/docker.sock:/var/run/docker.sock  # Access Docker stats API
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 5s
+      placement:
+        constraints:
+          - node.role == manager   # Needs Docker socket on manager
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 256M
+    depends_on:
+      - backend
+    networks:
+      - app-network
+
+  # ======================
+  # ORCHESTRATOR (Algorithm 1)  [NEW]
+  # ======================
+  # Service Orchestrator from the paper
+  # Watches Swarm events, tracks scheduling decisions,
+  # monitors desired vs actual state, logs self-healing events
+  orchestrator:
+    image: cc-research-orchestrator
+    build: ./orchestrator
+    environment:
+      - BACKEND_SERVICE=cc_research_backend
+      - AUTO_SCALE_ENABLED=true
+      - SCALE_UP_THRESHOLD=70.0
+      - SCALE_DOWN_THRESHOLD=30.0
+      - SCALE_UP_COOLDOWN=30
+      - SCALE_DOWN_COOLDOWN=60
+      - MIN_REPLICAS=2
+      - MAX_REPLICAS=8
+    volumes:
+      - //var/run/docker.sock:/var/run/docker.sock  # Access Docker events API
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 5s
+      placement:
+        constraints:
+          - node.role == manager   # Must run on manager for Swarm API access
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 256M
+    networks:
+      - app-network
+
+  # ======================
+  # BACKEND API SERVICE
+  # ======================
+  # Flask microservice - scaled to 4 replicas
+  # Load Balancer (Algorithm 2) routes to these based on memory usage
+  backend:
+    image: cc-research-backend
+    build: ./backend
+    deploy:
+      replicas: 4
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 0
+      update_config:
+        parallelism: 1
+        delay: 10s
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+      placement:
+        preferences:
+          - spread: node.id    # Spread replicas across nodes (for multi-node)
+    depends_on:
+      - redis
+    networks:
+      - app-network
+
+  # ======================
+  # REDIS CACHE SERVICE
+  # ======================
+  # Shared data store used by all 4 backend replicas
+  redis:
+    image: redis:alpine
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+    networks:
+      - app-network
+
+# ======================
+# NETWORK
+# ======================
+# Overlay network enables:
+# 1. Service Discovery - containers find each other by service name
+# 2. Load Balancing    - LB routes requests to individual container IPs
+# 3. Isolation         - containers are isolated from external network
+networks:
+  app-network:
+    driver: overlay
+    attachable: true

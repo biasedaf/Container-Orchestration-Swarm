@@ -1,0 +1,75 @@
+# Docker-in-Docker Multi-Node Swarm Simulation
+# ================================================
+# This compose file creates a 3-node Swarm cluster using Docker-in-Docker (DinD)
+# containers, allowing you to simulate multi-node behavior on a single machine.
+#
+# Architecture:
+#   manager1 (DinD) - Swarm manager, runs orchestrator + LB + frontend
+#   worker1  (DinD) - Swarm worker, runs backend replicas + redis
+#   worker2  (DinD) - Swarm worker, runs backend replicas
+#
+# Usage:
+#   docker-compose -f docker-compose.multinode.yml up -d
+#   Then run: bash scripts/simulate_multinode.sh deploy
+#
+# NOTE: This is for DEMONSTRATION PURPOSES to prove multi-node
+# scheduling and task distribution without requiring separate machines.
+
+version: '3.8'
+
+services:
+  # Swarm Manager Node
+  manager1:
+    image: docker:24-dind
+    privileged: true
+    hostname: manager1
+    container_name: swarm-manager1
+    environment:
+      - DOCKER_TLS_CERTDIR=
+    ports:
+      - "12375:2375"    # Docker API
+      - "18888:8888"    # Application access
+    networks:
+      - swarm-net
+    volumes:
+      - manager1-data:/var/lib/docker
+      - ./:/workspace:ro   # Mount project for image building
+
+  # Swarm Worker Node 1
+  worker1:
+    image: docker:24-dind
+    privileged: true
+    hostname: worker1
+    container_name: swarm-worker1
+    environment:
+      - DOCKER_TLS_CERTDIR=
+    networks:
+      - swarm-net
+    volumes:
+      - worker1-data:/var/lib/docker
+    depends_on:
+      - manager1
+
+  # Swarm Worker Node 2
+  worker2:
+    image: docker:24-dind
+    privileged: true
+    hostname: worker2
+    container_name: swarm-worker2
+    environment:
+      - DOCKER_TLS_CERTDIR=
+    networks:
+      - swarm-net
+    volumes:
+      - worker2-data:/var/lib/docker
+    depends_on:
+      - manager1
+
+networks:
+  swarm-net:
+    driver: bridge
+
+volumes:
+  manager1-data:
+  worker1-data:
+  worker2-data:
