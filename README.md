@@ -96,7 +96,7 @@ This project was built to practice and demonstrate the following **distributed s
 - Integration with Docker SDK for programmatic scaling
 
 ### Container Health Checks & Self-Healing
-- Docker HEALTHCHECK directives at container and service levels
+- Container-level Docker HEALTHCHECK directive (defined in the backend image; fails 3 consecutive checks → Swarm replaces the container)
 - Automatic container replacement on failure
 - Event-driven monitoring of container lifecycle
 
@@ -188,7 +188,7 @@ This project was built to practice and demonstrate the following **distributed s
 | **frontend** | Nginx (alpine) | Serves dashboard, reverse proxy to LB/orchestrator | Manager node |
 | **loadbalancer** | Python Flask | Memory-based routing, Docker stats polling | Manager node, Docker socket |
 | **orchestrator** | Python Flask | Event monitoring, auto-scaling, health probes | Manager node, Docker socket |
-| **backend** | Python Flask + Gunicorn | Microservice API (4 endpoints), Redis client | Spread across nodes |
+| **backend** | Python Flask + Gunicorn (2 workers × 2 threads) | Microservice API (6 endpoints), Redis client | Spread across nodes |
 | **redis** | redis:alpine | Shared state, request counters, cache | Any node |
 
 ### Request Flow
@@ -880,8 +880,7 @@ Event types: `ORCHESTRATOR_START`, `CONTAINER_START`, `CONTAINER_DIE`, `CONTAINE
 
 | Variable | Default | Description | Defined in |
 |----------|---------|-------------|-----------|
-| `FLASK_ENV` | `production` | Flask environment | App code |
-| `REDIS_HOST` | `redis` | Redis service DNS name | Code constant |
+| `REDIS_HOST` | `redis` | Redis service DNS name | Code constant (`backend/app.py`) |
 
 ---
 
@@ -1222,7 +1221,7 @@ container-orchestration-swarm/
 │
 ├── backend/                     # Flask microservice — Algorithm 2 routing targets
 │   ├── app.py                   # 6 endpoints: home, health, extract, compute, stats, info (251 lines)
-│   ├── Dockerfile               # Python 3.11-slim + Gunicorn (27 lines)
+│   ├── Dockerfile               # Python 3.11-slim + Gunicorn, 2 workers × 2 threads (27 lines)
 │   └── requirements.txt         # Flask, gunicorn, redis
 │
 ├── frontend/                    # Nginx reverse proxy + dashboard
@@ -1253,7 +1252,7 @@ container-orchestration-swarm/
     └── chaos_test_results.md    # Chaos test report template
 ```
 
-**Total**: 25 files, ~3,740 lines of code and configuration.
+**Total**: 25 files, ~3,480 lines of code and configuration (excluding this README).
 
 ---
 
